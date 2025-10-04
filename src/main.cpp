@@ -3,6 +3,14 @@
 
 #define OLED_ADDR 0x3C
 SH1106Wire display(OLED_ADDR, 8, 9);  // SDA = 8, SCL = 9
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+const int ROWS = 8;
+const int COLS = 16;
+uint8_t field[ROWS][COLS]; // 8x16 field
+int blockWidth  = SCREEN_WIDTH / COLS;   // 8 px
+int blockHeight = SCREEN_HEIGHT / ROWS;  // 8 px
 
 float leftEyeX = 40.0;
 float rightEyeX = 80.0;
@@ -19,8 +27,10 @@ int blinkDelay = 4000;
 unsigned long lastBlinkTime = 0;
 unsigned long moveTime = 0;
 
-int expression = 1;
 
+//------------------------------------------------------
+// Eye Functions
+//------------------------------------------------------
 
 void drawExpression(int eyeX, int eyeY, int eyeWidth, int eyeHeight, int exp) {
   display.fillRect(eyeX, eyeY, eyeWidth, eyeHeight);
@@ -61,9 +71,71 @@ void blink(){
 
   display.display();
   delay(20);
-
 }
 
+//------------------------------------------------------
+// Random Function
+//------------------------------------------------------
+
+void clearField() {
+  memset(field, 0, sizeof(field));
+}
+
+void drawField() {
+  for (int y = 0; y < ROWS; y++) {
+    for (int x = 0; x < COLS; x++) {
+      if (field[y][x] == 1) {
+        display.fillRect(x * blockWidth, y * blockHeight, blockWidth, blockHeight);
+      }
+    }
+  }
+  display.display();
+}
+
+bool isFull() {
+  for (int y = 0; y < ROWS; y++) {
+    for (int x = 0; x < COLS; x++) {
+      if (field[y][x] == 0) return false;
+    }
+  }
+  return true;
+}
+
+void addRandomBlock() {
+  int r = random(ROWS);
+  int c = random(COLS);
+  field[r][c] = 1;
+}
+
+void runRandomTetris() {
+  while (!isFull()) {
+    addRandomBlock();
+    drawField();
+    delay(50);
+  }
+  delay(500);
+  display.clear();
+  display.display();
+}
+
+void runRandomBlocks(unsigned long startTime) {
+  while (millis() - startTime < 10000) {
+    display.clear();
+    for (int y = 0; y < ROWS; y++) {
+      for (int x = 0; x < COLS; x++) {
+        if (random(0, 2) == 1) {
+          display.fillRect(x * blockWidth, y * blockHeight, blockWidth, blockHeight);
+        }
+      }
+    }
+    display.display();
+    delay(100);
+  }
+}
+
+unsigned long lastAction = 0;
+const unsigned long interval = 120000; // every two minutes runs a special function
+bool runningSpecial = false;
 
 void setup() {
   display.init();
@@ -72,9 +144,30 @@ void setup() {
   display.clear();
   display.display();
   delay(2000);
+
+  randomSeed(analogRead(A0));
 }
 
 void loop() {
-  blink();
+  unsigned long currentMillis = millis();
+
+  if (!runningSpecial && (currentMillis - lastAction >= interval)) {
+    lastAction = currentMillis;
+    runningSpecial = true;
+
+    int choice = random(3); // 0 - 2
+
+    if (choice == 0) {
+      runRandomTetris();
+    } else if(choice == 1) {
+      runRandomBlocks(currentMillis);
+    }
+
+    runningSpecial = false;
+  }
+
+  if (!runningSpecial) {
+    blink();
+  }
 }
 
