@@ -133,6 +133,50 @@ void runRandomBlocks(unsigned long startTime) {
   }
 }
 
+//------------------------------------------------------
+// Hacking Rain Function
+//------------------------------------------------------
+void runHackingRain(unsigned long startTime) {
+  // Spaltenbreite in Pixel
+  const int colWidth = 8;  
+  const int cols = SCREEN_WIDTH / colWidth;  
+  int yPositions[cols];  
+
+  // Anfangsposition jeder Spalte
+  for (int i = 0; i < cols; i++) {
+    yPositions[i] = random(-SCREEN_HEIGHT, 0); 
+  }
+
+  while (millis() - startTime < 10000) { // 10 Sekunden "Hack Effekt"
+    display.clear();
+
+    for (int i = 0; i < cols; i++) {
+      int y = yPositions[i];
+      int x = i * colWidth;
+
+      // zeichne eine 0 oder 1 an Position (x,y)
+      char c = random(2) ? '0' : '1';
+      display.drawString(x, y, String(c));
+
+      // nach unten bewegen
+      yPositions[i] += 8;  
+
+      // wenn unten angekommen -> neu starten
+      if (yPositions[i] > SCREEN_HEIGHT) {
+        yPositions[i] = random(-20, 0);
+      }
+    }
+
+    display.display();
+    delay(80);
+  }
+
+  display.clear();
+  display.display();
+}
+
+
+//------------------------------------------------------
 unsigned long lastAction = 0;
 const unsigned long interval = 120000; // every two minutes runs a special function
 bool runningSpecial = false;
@@ -155,13 +199,16 @@ void loop() {
     lastAction = currentMillis;
     runningSpecial = true;
 
-    int choice = random(3); // 0 - 2
+    int choice = random(6);
+    // 0 = Tetris, 1 = Blocks, 2 = Hacking Rain, 3,4,5 = nothing => 50% chance nothing happens
 
     if (choice == 0) {
       runRandomTetris();
-    } else if(choice == 1) {
+    } else if (choice == 1) {
       runRandomBlocks(currentMillis);
-    }
+    } else if (choice == 2) {
+      runHackingRain(currentMillis);
+    } 
 
     runningSpecial = false;
   }
