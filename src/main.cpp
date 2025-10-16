@@ -1,25 +1,45 @@
+#include <WiFi.h>
 #include <Wire.h>
-#include "SH1106Wire.h"
+#include <SH1106Wire.h>
+#include "time.h"
+#include <HTTPClient.h>
 
+#include "wifi_credentials.h"
+
+// ---------------------- CONFIG ----------------------
+// or use the wifi_credentials.h file and write the credentials there
+// const char* ssid = "Wifi-SSID";
+// const char* password = "Wifi-PW";
+
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 3600;
+const int daylightOffset_sec = 3600;
+
+#define SDA_PIN 9
+#define SCL_PIN 8
 #define OLED_ADDR 0x3C
-SH1106Wire display(OLED_ADDR, 8, 9);  // SDA = 8, SCL = 9
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
+SH1106Wire display(OLED_ADDR, SDA_PIN, SCL_PIN);
 
-const int ROWS = 8;
-const int COLS = 16;
-uint8_t field[ROWS][COLS]; // 8x16 field
-int blockWidth  = SCREEN_WIDTH / COLS;   // 8 px
-int blockHeight = SCREEN_HEIGHT / ROWS;  // 8 px
+#define TOUCH_PIN 4
 
+// ---------------------- MODE CONTROL ----------------------
+int displayMode = 0; // 0 = idle eyes, 1 = time, 2 = BTC, 3 = credits
+unsigned long modeStartTime = 0;
+const unsigned long modeDuration = 20000; // 20 seconds
+
+// ---------------------- TOUCH DEBOUNCE ----------------------
+unsigned long lastTouchTime = 0;
+const unsigned long debounceDelay = 400; // milliseconds
+
+// ---------------------- EYE ANIMATION ----------------------
 float leftEyeX = 40.0;
 float rightEyeX = 80.0;
 const int eyeY = 18;
-const int eyeWidth =25;
+const int eyeWidth = 25;
 const int eyeHeight = 40;
 
-float targetLeftEyeX = leftEyeX;
-float targetRightEyeX = rightEyeX;
+float targetLeftEyeX = 40.0;
+float targetRightEyeX = 80.0;
 const float moveSpeed = 0.1;
 
 int blinkState = 0;
@@ -27,17 +47,114 @@ int blinkDelay = 4000;
 unsigned long lastBlinkTime = 0;
 unsigned long moveTime = 0;
 
+// ================================================================
+//                        HELPER FUNCTIONS
+// ================================================================
 
-//------------------------------------------------------
-// Eye Functions
-//------------------------------------------------------
-
-void drawExpression(int eyeX, int eyeY, int eyeWidth, int eyeHeight, int exp) {
-  display.fillRect(eyeX, eyeY, eyeWidth, eyeHeight);
+String getLocalTimeString() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "Time error";
+  char timeString[100];
+  strftime(timeString, sizeof(timeString), "%H:%M:%S", &timeinfo);
+  return String(timeString);
 }
 
+bool timeSynced() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return false;
+  return (timeinfo.tm_year > (1970 - 1900));
+}
 
-void blink(){
+void startWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+
+  display.clear();
+  display.drawString(0, 0, "Connecting WiFi...");
+  display.display();
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+  }
+
+  display.clear();
+  display.drawString(0, 0, "WiFi connected");
+  display.display();
+  delay(1000);
+}
+
+void setupTime() {
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  display.clear();
+  display.drawString(0, 0, "Syncing time...");
+  display.display();
+
+  int retries = 0;
+  while (!timeSynced() && retries < 20) {
+    delay(1000);
+    retries++;
+  }
+
+  display.clear();
+  if (timeSynced())
+    display.drawString(0, 0, "Time synced!");
+  else
+    display.drawString(0, 0, "Time sync failed!");
+  display.display();
+  delay(1500);
+}
+
+// ================================================================
+//                        DISPLAY FUNCTIONS
+// ================================================================
+
+void showTime() {
+  display.clear();
+  display.setFont(ArialMT_Plain_24);
+  String timeStr = getLocalTimeString();
+  int w = display.getStringWidth(timeStr);
+  int x = (128 - w) / 2;
+  int y = (64 - 24) / 2;
+  display.drawString(x, y, timeStr);
+  display.display();
+  display.setFont(ArialMT_Plain_16);
+}
+
+String getBtcPrice() {
+    return "111111$";
+}
+
+void showBtc() {
+  display.clear();
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(0, 0, "BTC Price:");
+  String btc = getBtcPrice();
+  display.setFont(ArialMT_Plain_24);
+  int w = display.getStringWidth(btc);
+  int x = (128 - w) / 2;
+  int y = (64 - 24) / 2;
+  display.drawString(x, y, btc);
+  display.display();
+  display.setFont(ArialMT_Plain_16);
+}
+
+void showCredits() {
+  display.clear();
+  display.setFont(ArialMT_Plain_16);
+  String msg = "Made by LennyE";
+  int w = display.getStringWidth(msg);
+  int x = (128 - w) / 2;
+  int y = (64 - 16) / 2;
+  display.drawString(x, y, msg);
+  display.display();
+}
+
+// ================================================================
+//                        EYE ANIMATION
+// ================================================================
+
+void blinkEyes() {
   unsigned long currentTime = millis();
 
   if (currentTime - lastBlinkTime > blinkDelay && blinkState == 0) {
@@ -73,148 +190,72 @@ void blink(){
   delay(20);
 }
 
-//------------------------------------------------------
-// Random Function
-//------------------------------------------------------
-
-void clearField() {
-  memset(field, 0, sizeof(field));
-}
-
-void drawField() {
-  for (int y = 0; y < ROWS; y++) {
-    for (int x = 0; x < COLS; x++) {
-      if (field[y][x] == 1) {
-        display.fillRect(x * blockWidth, y * blockHeight, blockWidth, blockHeight);
-      }
-    }
-  }
-  display.display();
-}
-
-bool isFull() {
-  for (int y = 0; y < ROWS; y++) {
-    for (int x = 0; x < COLS; x++) {
-      if (field[y][x] == 0) return false;
-    }
-  }
-  return true;
-}
-
-void addRandomBlock() {
-  int r = random(ROWS);
-  int c = random(COLS);
-  field[r][c] = 1;
-}
-
-void runRandomTetris() {
-  while (!isFull()) {
-    addRandomBlock();
-    drawField();
-    delay(50);
-  }
-  delay(500);
-  display.clear();
-  display.display();
-}
-
-void runRandomBlocks(unsigned long startTime) {
-  while (millis() - startTime < 10000) {
-    display.clear();
-    for (int y = 0; y < ROWS; y++) {
-      for (int x = 0; x < COLS; x++) {
-        if (random(0, 2) == 1) {
-          display.fillRect(x * blockWidth, y * blockHeight, blockWidth, blockHeight);
-        }
-      }
-    }
-    display.display();
-    delay(100);
-  }
-}
-
-//------------------------------------------------------
-// Hacking Rain Function
-//------------------------------------------------------
-void runHackingRain(unsigned long startTime) {
-  // Spaltenbreite in Pixel
-  const int colWidth = 8;  
-  const int cols = SCREEN_WIDTH / colWidth;  
-  int yPositions[cols];  
-
-  // Anfangsposition jeder Spalte
-  for (int i = 0; i < cols; i++) {
-    yPositions[i] = random(-SCREEN_HEIGHT, 0); 
-  }
-
-  while (millis() - startTime < 10000) { // 10 Sekunden "Hack Effekt"
-    display.clear();
-
-    for (int i = 0; i < cols; i++) {
-      int y = yPositions[i];
-      int x = i * colWidth;
-
-      // zeichne eine 0 oder 1 an Position (x,y)
-      char c = random(2) ? '0' : '1';
-      display.drawString(x, y, String(c));
-
-      // nach unten bewegen
-      yPositions[i] += 8;  
-
-      // wenn unten angekommen -> neu starten
-      if (yPositions[i] > SCREEN_HEIGHT) {
-        yPositions[i] = random(-20, 0);
-      }
-    }
-
-    display.display();
-    delay(80);
-  }
-
-  display.clear();
-  display.display();
-}
-
-
-//------------------------------------------------------
-unsigned long lastAction = 0;
-const unsigned long interval = 120000; // every two minutes runs a special function
-bool runningSpecial = false;
+// ================================================================
+//                        SETUP & LOOP
+// ================================================================
 
 void setup() {
+  Serial.begin(115200);
+  pinMode(TOUCH_PIN, INPUT);
+
   display.init();
   display.flipScreenVertically();
-  display.setContrast(255);
+  display.setFont(ArialMT_Plain_16);
+
+  startWifi();
+  setupTime();
+
   display.clear();
+  display.drawString(0, 0, "Ready");
   display.display();
-  delay(2000);
 
   randomSeed(analogRead(A0));
 }
-
 void loop() {
-  unsigned long currentMillis = millis();
+  unsigned long now = millis();
 
-  if (!runningSpecial && (currentMillis - lastAction >= interval)) {
-    lastAction = currentMillis;
-    runningSpecial = true;
+  // Handle touch press with debounce
+  if (digitalRead(TOUCH_PIN) == HIGH && now - lastTouchTime > debounceDelay) {
+    lastTouchTime = now;
 
-    int choice = random(6);
-    // 0 = Tetris, 1 = Blocks, 2 = Hacking Rain, 3,4,5 = nothing => 50% chance nothing happens
+    // Only change mode when in eyes (idle) mode
+    if (displayMode == 0) {
+      static int nextInfoMode = 1; // remembers which info mode is next
 
-    if (choice == 0) {
-      runRandomTetris();
-    } else if (choice == 1) {
-      runRandomBlocks(currentMillis);
-    } else if (choice == 2) {
-      runHackingRain(currentMillis);
-    } 
+      displayMode = nextInfoMode;
+      modeStartTime = now;
 
-    runningSpecial = false;
+      nextInfoMode++;
+      if (nextInfoMode > 3) nextInfoMode = 1; // cycle 1→2→3→1
+
+      Serial.printf("Mode changed to %d\n", displayMode);
+    }
+
+    delay(50); // small debounce delay
   }
 
-  if (!runningSpecial) {
-    blink();
+  // MODE HANDLER
+  switch (displayMode) {
+    case 0: // idle eyes
+      blinkEyes();
+      break;
+
+    case 1: // show time
+      showTime();
+      if (now - modeStartTime > modeDuration) displayMode = 0;
+      delay(1000);
+      break;
+
+    case 2: // show BTC
+      showBtc();
+      if (now - modeStartTime > modeDuration) displayMode = 0;
+      delay(5000);
+      break;
+
+    case 3: // show credits
+      showCredits();
+      if (now - modeStartTime > modeDuration) displayMode = 0;
+      delay(1000);
+      break;
   }
 }
-
