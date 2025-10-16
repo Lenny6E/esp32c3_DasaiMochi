@@ -3,14 +3,9 @@
 #include <SH1106Wire.h>
 #include "time.h"
 #include <HTTPClient.h>
-
 #include "wifi_credentials.h"
 
 // ---------------------- CONFIG ----------------------
-// or use the wifi_credentials.h file and write the credentials there
-// const char* ssid = "Wifi-SSID";
-// const char* password = "Wifi-PW";
-
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 3600;
 const int daylightOffset_sec = 3600;
@@ -29,7 +24,7 @@ const unsigned long modeDuration = 20000; // 20 seconds
 
 // ---------------------- TOUCH DEBOUNCE ----------------------
 unsigned long lastTouchTime = 0;
-const unsigned long debounceDelay = 400; // milliseconds
+const unsigned long debounceDelay = 400;
 
 // ---------------------- EYE ANIMATION ----------------------
 float leftEyeX = 40.0;
@@ -46,6 +41,17 @@ int blinkState = 0;
 int blinkDelay = 4000;
 unsigned long lastBlinkTime = 0;
 unsigned long moveTime = 0;
+
+// ---------------------- RANDOM VISUALS ----------------------
+const int ROWS = 8;
+const int COLS = 16;
+uint8_t field[ROWS][COLS];
+int blockWidth  = 128 / COLS;
+int blockHeight = 64 / ROWS;
+
+unsigned long lastAction = 0;
+const unsigned long interval = 120000; // every 2 minutes
+bool runningSpecial = false;
 
 // ================================================================
 //                        HELPER FUNCTIONS
@@ -109,6 +115,41 @@ void setupTime() {
 //                        DISPLAY FUNCTIONS
 // ================================================================
 
+String getBtcPrice() {
+  HTTPClient http;
+  String url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=BTC&convert=USD";
+  http.begin(url);
+  http.addHeader("Accepts", "application/json");
+  http.addHeader("X-CMC_PRO_API_KEY", "e5e4719c13c842d982a8ed7a1da6d87b");
+
+  int httpCode = http.GET();
+  String payload;
+
+  if (httpCode > 0) {
+    payload = http.getString();
+
+    int priceIndex = payload.indexOf("\"price\":");
+    if (priceIndex > 0) {
+      String sub = payload.substring(priceIndex + 8);
+      int endIndex = sub.indexOf(",");
+      if (endIndex > 0) {
+        String priceStr = sub.substring(0, endIndex);
+        float price = priceStr.toFloat();
+        char buffer[20];
+        snprintf(buffer, sizeof(buffer), "%.2f$", price);
+        http.end();
+        return String(buffer);
+      }
+    }
+
+    http.end();
+    return "Parse error";
+  } else {
+    http.end();
+    return "HTTP error";
+  }
+}
+
 void showTime() {
   display.clear();
   display.setFont(ArialMT_Plain_24);
@@ -121,20 +162,23 @@ void showTime() {
   display.setFont(ArialMT_Plain_16);
 }
 
-String getBtcPrice() {
-    return "111111$";
-}
-
 void showBtc() {
   display.clear();
+
   display.setFont(ArialMT_Plain_16);
-  display.drawString(0, 0, "BTC Price:");
+  String title = "BTC Price";
+  int titleWidth = display.getStringWidth(title);
+  int titleX = (128 - titleWidth) / 2;
+  display.drawString(titleX, 0, title);
+
   String btc = getBtcPrice();
   display.setFont(ArialMT_Plain_24);
-  int w = display.getStringWidth(btc);
-  int x = (128 - w) / 2;
-  int y = (64 - 24) / 2;
-  display.drawString(x, y, btc);
+  int priceWidth = display.getStringWidth(btc);
+  int priceHeight = 24;
+  int priceX = (128 - priceWidth) / 2;
+  int priceY = (64 - priceHeight) / 2 + 8;
+  display.drawString(priceX, priceY, btc);
+
   display.display();
   display.setFont(ArialMT_Plain_16);
 }
@@ -191,6 +235,96 @@ void blinkEyes() {
 }
 
 // ================================================================
+//                        RANDOM VISUAL EFFECTS
+// ================================================================
+
+void clearField() {
+  memset(field, 0, sizeof(field));
+}
+
+void drawField() {
+  for (int y = 0; y < ROWS; y++) {
+    for (int x = 0; x < COLS; x++) {
+      if (field[y][x] == 1) {
+        display.fillRect(x * blockWidth, y * blockHeight, blockWidth, blockHeight);
+      }
+    }
+  }
+  display.display();
+}
+
+bool isFull() {
+  for (int y = 0; y < ROWS; y++) {
+    for (int x = 0; x < COLS; x++) {
+      if (field[y][x] == 0) return false;
+    }
+  }
+  return true;
+}
+
+void addRandomBlock() {
+  int r = random(ROWS);
+  int c = random(COLS);
+  field[r][c] = 1;
+}
+
+void runRandomTetris() {
+  clearField();
+  while (!isFull()) {
+    addRandomBlock();
+    drawField();
+    delay(50);
+  }
+  delay(500);
+  display.clear();
+  display.display();
+}
+
+void runRandomBlocks(unsigned long startTime) {
+  while (millis() - startTime < 10000) {
+    display.clear();
+    for (int y = 0; y < ROWS; y++) {
+      for (int x = 0; x < COLS; x++) {
+        if (random(0, 2) == 1) {
+          display.fillRect(x * blockWidth, y * blockHeight, blockWidth, blockHeight);
+        }
+      }
+    }
+    display.display();
+    delay(100);
+  }
+}
+
+void runHackingRain(unsigned long startTime) {
+  const int colWidth = 8;
+  const int cols = 128 / colWidth;
+  int yPositions[cols];
+
+  for (int i = 0; i < cols; i++) {
+    yPositions[i] = random(-64, 0);
+  }
+
+  while (millis() - startTime < 10000) {
+    display.clear();
+    for (int i = 0; i < cols; i++) {
+      int y = yPositions[i];
+      int x = i * colWidth;
+      char c = random(2) ? '0' : '1';
+      display.drawString(x, y, String(c));
+      yPositions[i] += 8;
+      if (yPositions[i] > 64) {
+        yPositions[i] = random(-20, 0);
+      }
+    }
+    display.display();
+    delay(80);
+  }
+
+  display.clear();
+  display.display();
+}
+
+// ================================================================
 //                        SETUP & LOOP
 // ================================================================
 
@@ -211,6 +345,7 @@ void setup() {
 
   randomSeed(analogRead(A0));
 }
+
 void loop() {
   unsigned long now = millis();
 
@@ -218,44 +353,37 @@ void loop() {
   if (digitalRead(TOUCH_PIN) == HIGH && now - lastTouchTime > debounceDelay) {
     lastTouchTime = now;
 
-    // Only change mode when in eyes (idle) mode
     if (displayMode == 0) {
-      static int nextInfoMode = 1; // remembers which info mode is next
-
+      static int nextInfoMode = 1;
       displayMode = nextInfoMode;
       modeStartTime = now;
 
       nextInfoMode++;
-      if (nextInfoMode > 3) nextInfoMode = 1; // cycle 1→2→3→1
+      if (nextInfoMode > 3) nextInfoMode = 1;
 
       Serial.printf("Mode changed to %d\n", displayMode);
     }
 
-    delay(50); // small debounce delay
+    delay(50);
   }
 
-  // MODE HANDLER
   switch (displayMode) {
-    case 0: // idle eyes
-      blinkEyes();
-      break;
+    case 0: blinkEyes(); break;
+    case 1: showTime(); if (now - modeStartTime > modeDuration) displayMode = 0; delay(1000); break;
+    case 2: showBtc();  if (now - modeStartTime > modeDuration) displayMode = 0; delay(5000); break;
+    case 3: showCredits(); if (now - modeStartTime > modeDuration) displayMode = 0; delay(1000); break;
+  }
 
-    case 1: // show time
-      showTime();
-      if (now - modeStartTime > modeDuration) displayMode = 0;
-      delay(1000);
-      break;
+  unsigned long currentMillis = millis();
+  if (!runningSpecial && (currentMillis - lastAction >= interval)) {
+    lastAction = currentMillis;
+    runningSpecial = true;
 
-    case 2: // show BTC
-      showBtc();
-      if (now - modeStartTime > modeDuration) displayMode = 0;
-      delay(5000);
-      break;
+    int choice = random(6); // 0–5 → 50% chance nothing happens
+    if (choice == 0) runRandomTetris();
+    else if (choice == 1) runRandomBlocks(currentMillis);
+    else if (choice == 2) runHackingRain(currentMillis);
 
-    case 3: // show credits
-      showCredits();
-      if (now - modeStartTime > modeDuration) displayMode = 0;
-      delay(1000);
-      break;
+    runningSpecial = false;
   }
 }
